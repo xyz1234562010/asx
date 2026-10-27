@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="zh"><head><meta charset="utf-8"><title>ASX 做空追踪</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="manifest" href="manifest.json"><link rel="apple-touch-icon" href="icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="ASX做空"><meta name="theme-color" content="#0e1116">
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--tx:#14181f;--mut:#667085;--bd:#e4e7ec;--g:#0f9d58;--r:#d93025;--gb:#e6f4ea;--rb:#fce8e6;--ac:#2563eb}
+@media(prefers-color-scheme:dark){:root{--bg:#0e1116;--card:#171b22;--tx:#eef1f5;--mut:#9aa4b2;--bd:#2a313c;--g:#34d17a;--r:#ff6b60;--gb:#12301f;--rb:#3a1a18;--ac:#6ea0ff}}
+html{height:100%}body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.4 -apple-system,"PingFang SC",sans-serif;padding:env(safe-area-inset-top) 0 80px}
+header{padding:14px 16px 4px}h1{font-size:18px;margin:0}.sub{color:var(--mut);font-size:12px;margin-top:2px}
+.warn{margin:8px 16px;padding:8px 10px;border-radius:8px;background:var(--rb);font-size:12px}
+.tabs{position:fixed;bottom:0;left:0;right:0;display:flex;background:var(--card);border-top:1px solid var(--bd);padding-bottom:env(safe-area-inset-bottom)}
+.tabs button{flex:1;padding:12px 0;border:0;background:none;color:var(--mut);font-size:13px}.tabs button.on{color:var(--ac);font-weight:600}
+.pg{display:none;padding:8px 16px}.pg.on{display:block}
+.seg{display:flex;gap:6px;margin:6px 0 10px}.seg button{flex:1;padding:8px;border:1px solid var(--bd);border-radius:8px;background:var(--card);color:var(--tx)}.seg button.on{background:var(--ac);color:#fff;border-color:var(--ac)}
+.row{display:flex;align-items:center;justify-content:space-between;background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:10px 12px;margin-bottom:6px}
+.t{font-weight:700}.m{color:var(--mut);font-size:12px}.num{text-align:right}
+.badge{padding:3px 10px;border-radius:999px;font-weight:700;font-size:13px}.buy{background:var(--gb);color:var(--g)}.sell{background:var(--rb);color:var(--r)}.hold{background:var(--bd);color:var(--mut)}
+input{width:100%;box-sizing:border-box;padding:11px;border:1px solid var(--bd);border-radius:10px;background:var(--card);color:var(--tx);font-size:16px;text-transform:uppercase}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:12px;margin-top:10px}svg{width:100%;display:block}.big{font-size:22px;font-weight:700}.up{color:var(--g)}.dn{color:var(--r)}a{color:var(--ac)}
+</style></head><body>
+<header><h1>ASX 做空 &amp; 成交量追踪</h1><div class="sub" id="st">加载中…</div></header>
+<div class="warn" id="demo" style="display:none">⚠️ 尚未找到真实数据（data/data.json），当前显示<b>示例数据</b>。部署后端并运行一次后会自动切换。</div>
+<div id="p0" class="pg on"><div class="seg"><button id="bv" class="on" onclick="mode('v')">成交量异动</button><button id="bs" onclick="mode('s')">做空比例变化</button></div><div id="top"></div></div>
+<div id="p1" class="pg"><input id="q" placeholder="输入代码，如 BHP" oninput="look()"><div id="res" class="m" style="margin-top:10px"></div></div>
+<div id="p2" class="pg"><div class="m" style="margin-bottom:8px">规则：放量≥1.3× + 做空比例低于30日均值1个标准差 + 当日上涨 → <b class="up">买</b>；放量≥1.2× + 做空高于均值1个标准差 + 当日下跌 → <b class="dn">卖</b>。</div><div id="sig"></div></div>
+<div id="p3" class="pg"><div class="card m">数据：ASIC 每日汇总做空仓位（滞后约4个交易日）+ Yahoo Finance 行情成交量（约延迟20分钟，每日收盘后更新）+ ASX 公告（尽力获取）。信号仅为量化研究参考，不构成投资建议，请先回测。<br><br><a href="https://www.asic.gov.au/regulatory-resources/markets/short-selling/short-position-reports-table/" target="_blank">ASIC 做空报告</a> · <a href="https://www.asx.com.au/markets/trade-our-cash-market/announcements" target="_blank">ASX 公告</a></div></div>
+<nav class="tabs"><button class="on" onclick="tab(0,this)">Top 10</button><button onclick="tab(1,this)">个股对比</button><button onclick="tab(2,this)">买卖信号</button><button onclick="tab(3,this)">说明</button></nav>
+<script>
+let D=[],NEWS={},md="v";
+const f=n=>n>=1e6?(n/1e6).toFixed(2)+"M":(n/1e3).toFixed(0)+"K",lab={buy:"买入",sell:"卖出",hold:"观望"};
+function demo(){let s=7;const r=()=>(s=(s*16807)%2147483647)/2147483647;
+return "BHP CBA CSL NAB WBC ANZ FMG WES MQG PLS LTR IGO MIN NST EVN QAN XRO ZIP LYC DRO".split(" ").map(c=>{const v0=1e6+r()*4e6,s0=.5+r()*8,V=[],S=[];
+for(let i=0;i<40;i++){V.push(v0*(.7+r()*.6));S.push(s0+(r()-.5)*s0*.15)}V[39]*=.8+r()*2;S[39]+=(r()-.5)*s0*.3;
+const av=V.slice(18,38).reduce((a,b)=>a+b)/20,as=S.slice(8,38).reduce((a,b)=>a+b)/30,vr=V[39]/av,sd=S[39]-as,px=(r()-.5)*5;
+const sig=vr>1.3&&sd<-.1&&px>0?"buy":vr>1.2&&sd>.1&&px<0?"sell":"hold";
+return{c,V,S,av,as,vr,sd,sp:sd/as*100,px,sig,sc:vr-1+Math.abs(sd)}})}
+async function init(){try{const j=await (await fetch("data/data.json",{cache:"no-cache"})).json();D=j.stocks;NEWS=j.news||{};
+st.textContent="做空数据日期 "+j.short_date+" · 更新 "+j.updated.slice(0,16).replace("T"," ")+" UTC · "+D.length+" 只";notify()}
+catch(e){D=demo();demo_.style.display="block";st.textContent="示例数据"}top_();sig_()}
+const demo_=document.getElementById("demo");
+function notify(){try{const k="seen",seen=JSON.parse(localStorage.getItem(k)||"[]"),now=D.filter(d=>d.sig!="hold").map(d=>d.c+d.sig);
+const fresh=now.filter(x=>!seen.includes(x));localStorage.setItem(k,JSON.stringify(now));
+if(fresh.length&&window.Notification&&Notification.permission=="granted")new Notification("ASX 新信号",{body:fresh.slice(0,6).map(x=>x.slice(0,-3)+(x.endsWith("buy")?" 买":" 卖")).join(" · ")})}catch(e){}}
+function top_(){const a=[...D].sort((x,y)=>md=="v"?y.vr-x.vr:Math.abs(y.sp)-Math.abs(x.sp)).slice(0,10);
+top.innerHTML=a.map((d,i)=>`<div class="row" onclick="go('${d.c}')"><div><div class="t">${i+1}. ${d.c}</div><div class="m">${md=="v"?"今日 "+f(d.V.at(-1))+" · 20日均 "+f(d.av):"今日 "+d.S.at(-1).toFixed(2)+"% · 30日均 "+d.as.toFixed(2)+"%"}</div></div><div class="num"><div class="t ${(md=="v"?d.vr>1:d.sd>0)?"up":"dn"}">${md=="v"?"×"+d.vr.toFixed(2):(d.sd>0?"+":"")+d.sp.toFixed(1)+"%"}</div><span class="badge ${d.sig}">${lab[d.sig]}</span></div></div>`).join("")}
+function mode(m){md=m;bv.classList.toggle("on",m=="v");bs.classList.toggle("on",m=="s");top_()}
+function chart(a,avg,col){const w=320,h=110,mx=Math.max(...a,avg)*1.1,mn=Math.min(...a,avg)*.9,X=i=>i/(a.length-1)*w,Y=v=>h-(v-mn)/(mx-mn||1)*h;
+return `<svg viewBox="0 0 ${w} ${h}"><line x1="0" x2="${w}" y1="${Y(avg)}" y2="${Y(avg)}" stroke="var(--mut)" stroke-dasharray="4"/><polyline fill="none" stroke="${col}" stroke-width="2" points="${a.map((v,i)=>X(i)+","+Y(v)).join(" ")}"/><circle cx="${X(a.length-1)}" cy="${Y(a.at(-1))}" r="4" fill="${col}"/></svg>`}
+function look(){const c=q.value.trim().toUpperCase();if(!c){res.textContent="输入代码，对比做空比例与成交量历史";return}
+const d=D.find(x=>x.c==c);if(!d){const m=D.filter(x=>x.c.startsWith(c)).slice(0,8);res.innerHTML=m.length?m.map(x=>`<button onclick="go('${x.c}')" style="margin:3px;padding:6px 10px">${x.c}</button>`).join(""):"没有找到 "+c;return}
+const n=(NEWS[c]||[]).map(a=>`<div class="m" style="margin-top:6px">${a.d} · <a href="${a.u}" target="_blank">${a.t}</a></div>`).join("");
+res.innerHTML=`<div class="card"><div style="display:flex;justify-content:space-between;align-items:center"><span class="big">${d.c}</span><span class="badge ${d.sig}">${lab[d.sig]}</span></div><div class="m" style="margin-top:10px">成交量（近40日，虚线=20日均）</div>${chart(d.V,d.av,"var(--ac)")}<div class="m">今日 ${f(d.V.at(-1))} · 均值的 <b>${d.vr.toFixed(2)}×</b> · 当日涨跌 ${d.px.toFixed(2)}%</div></div><div class="card"><div class="m">做空比例 %（虚线=30日均）</div>${chart(d.S,d.as,d.sd>0?"var(--r)":"var(--g)")}<div class="m">今日 ${d.S.at(-1).toFixed(2)}% · 均值 ${d.as.toFixed(2)}% · 变化 <b class="${d.sd>0?"dn":"up"}">${d.sd>0?"+":""}${d.sd.toFixed(2)}pp</b></div></div>${n?`<div class="card"><b>最新 ASX 公告</b>${n}</div>`:""}`}
+function sig_(){const a=D.filter(d=>d.sig!="hold").sort((x,y)=>y.sc-x.sc);sig.innerHTML=a.length?a.map(d=>`<div class="row" onclick="go('${d.c}')"><div><div class="t">${d.c}</div><div class="m">放量 ×${d.vr.toFixed(2)} · 做空 ${d.sd>0?"↑":"↓"}${Math.abs(d.sd).toFixed(2)}pp · 股价 ${d.px.toFixed(1)}%</div></div><span class="badge ${d.sig}">${lab[d.sig]}</span></div>`).join(""):'<div class="m">今日无信号</div>'}
+function tab(i,b){document.querySelectorAll(".pg").forEach((p,j)=>p.classList.toggle("on",i==j));document.querySelectorAll(".tabs button").forEach(x=>x.classList.remove("on"));b.classList.add("on");if(i==2&&window.Notification&&Notification.permission=="default")Notification.requestPermission()}
+function go(c){tab(1,document.querySelectorAll(".tabs button")[1]);q.value=c;look()}
+if("serviceWorker"in navigator)navigator.serviceWorker.register("sw.js");
+init();
+</script></body></html>
