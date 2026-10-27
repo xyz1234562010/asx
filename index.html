@@ -19,44 +19,51 @@ header{padding:14px 16px 4px}h1{font-size:18px;margin:0}.sub{color:var(--mut);fo
 .badge{padding:3px 10px;border-radius:999px;font-weight:700;font-size:13px}.buy{background:var(--gb);color:var(--g)}.sell{background:var(--rb);color:var(--r)}.hold{background:var(--bd);color:var(--mut)}
 input{width:100%;box-sizing:border-box;padding:11px;border:1px solid var(--bd);border-radius:10px;background:var(--card);color:var(--tx);font-size:16px;text-transform:uppercase}
 .card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:12px;margin-top:10px}svg{width:100%;display:block}.big{font-size:22px;font-weight:700}.up{color:var(--g)}.dn{color:var(--r)}a{color:var(--ac)}
+.hr{background:var(--rb);color:var(--r);font-size:11px;padding:1px 6px;border-radius:6px;font-weight:700;margin-left:4px}.tabs button{font-size:12px}.sc{font-size:20px;font-weight:700}.note{color:var(--mut);font-size:12px;margin:4px 0 10px}
 </style></head><body>
 <header><h1>ASX 做空 &amp; 成交量追踪</h1><div class="sub" id="st">加载中…</div></header>
-<div class="warn" id="demo" style="display:none">⚠️ 尚未找到真实数据（data/data.json），当前显示<b>示例数据</b>。部署后端并运行一次后会自动切换。</div>
 <div id="p0" class="pg on"><div class="seg"><button id="bv" class="on" onclick="mode('v')">成交量异动</button><button id="bs" onclick="mode('s')">做空比例变化</button></div><div id="tl"></div></div>
-<div id="p1" class="pg"><input id="q" placeholder="输入代码或名称，如 ZIP" oninput="look()"><div id="res" class="m" style="margin-top:10px"></div></div>
-<div id="p2" class="pg"><div class="m" style="margin-bottom:8px">规则：放量≥1.3× + 做空比例低于30日均值1个标准差 + 当日上涨 → <b class="up">买</b>；放量≥1.2× + 做空高于均值1个标准差 + 当日下跌 → <b class="dn">卖</b>。</div><div id="sig"></div></div>
-<div id="p3" class="pg"><div class="card m">数据：ASIC 每日汇总做空仓位（滞后约4个交易日）+ Yahoo Finance 行情成交量（约延迟20分钟，每日收盘后更新）+ ASX 公告（尽力获取）。信号仅为量化研究参考，不构成投资建议，请先回测。<br><br><a href="https://www.asic.gov.au/regulatory-resources/markets/short-selling/short-position-reports-table/" target="_blank">ASIC 做空报告</a> · <a href="https://www.asx.com.au/markets/trade-our-cash-market/announcements" target="_blank">ASX 公告</a></div></div>
-<nav class="tabs"><button class="on" onclick="tab(0,this)">Top 10</button><button onclick="tab(1,this)">个股对比</button><button onclick="tab(2,this)">买卖信号</button><button onclick="tab(3,this)">说明</button></nav>
+<div id="p1" class="pg"><input id="q" placeholder="输入任意 ASX 代码或公司名，如 ZIP" oninput="look()"><div id="res" class="m" style="margin-top:10px"></div></div>
+<div id="p2" class="pg"><div class="note">买：做空比例低于30日均值1个标准差且至少少0.1pp + 放量≥1.3× + 当日上涨。卖：做空高于均值1个标准差且至少多0.1pp + 放量≥1.2× + 当日下跌。成交额低于10万澳元的股票不参与。价格与成交量用的是后端最近一次运行时抓到的最新行情；做空数据是 ASIC 最新发布（滞后约4个交易日）。</div><div id="sig"></div></div>
+<div id="p3" class="pg"><div class="note" id="n3"></div><div id="bfl"></div></div>
+<div id="p4" class="pg"><div class="note" id="n4"></div><div id="qfl"></div></div>
+<div id="p5" class="pg"><div class="card m">数据：ASIC 每日汇总做空仓位 + Yahoo Finance 行情（后端每个工作日悉尼收盘后更新，手动运行 workflow 可立即刷新）+ ASX 公告（尽力获取）。股票名单来自 ASX 官方上市公司列表与 ASIC 名单的并集。<br><br>做空比例超过10%的股票标「高风险」，因为高做空通常意味着市场看空，同时也有被逼空的剧烈波动风险。<br><br>所有模型与信号都没有经过回测，不构成投资建议。<br><br><a href="https://www.asic.gov.au/regulatory-resources/markets/short-selling/short-position-reports-table/" target="_blank">ASIC 做空报告</a> · <a href="https://www.asx.com.au/markets/trade-our-cash-market/announcements" target="_blank">ASX 公告</a></div></div>
+<nav class="tabs"><button class="on" onclick="tab(0,this)">异动</button><button onclick="tab(1,this)">个股</button><button onclick="tab(2,this)">信号</button><button onclick="tab(3,this)">巴芒</button><button onclick="tab(4,this)">量化</button><button onclick="tab(5,this)">说明</button></nav>
 <script>
 let D=[],NEWS={},md="v";
-const f=n=>n>=1e6?(n/1e6).toFixed(2)+"M":(n/1e3).toFixed(0)+"K",lab={buy:"买入",sell:"卖出",hold:"观望"};
-function demo(){let s=7;const r=()=>(s=(s*16807)%2147483647)/2147483647;
-return "BHP CBA CSL NAB WBC ANZ FMG WES MQG PLS LTR IGO MIN NST EVN QAN XRO ZIP LYC DRO".split(" ").map(c=>{const v0=1e6+r()*4e6,s0=.5+r()*8,V=[],S=[];
-for(let i=0;i<40;i++){V.push(v0*(.7+r()*.6));S.push(s0+(r()-.5)*s0*.15)}V[39]*=.8+r()*2;S[39]+=(r()-.5)*s0*.3;
-const av=V.slice(18,38).reduce((a,b)=>a+b)/20,as=S.slice(8,38).reduce((a,b)=>a+b)/30,vr=V[39]/av,sd=S[39]-as,px=(r()-.5)*5;
-const sig=vr>1.3&&sd<-.1&&px>0?"buy":vr>1.2&&sd>.1&&px<0?"sell":"hold";
-return{c,V,S,av,as,vr,sd,sp:sd/as*100,px,sig,sc:vr-1+Math.abs(sd)}})}
+const f=n=>n>=1e6?(n/1e6).toFixed(2)+"M":(n/1e3).toFixed(0)+"K",lab={buy:"买入",sell:"卖出",hold:"观望"},$=i=>document.getElementById(i);
+const HR=d=>d.sl>10?'<span class="hr">高风险</span>':"";
+const SL=d=>d.S.length?"做空 "+d.sl.toFixed(2)+"%":"无ASIC做空记录";
+function row(d,i,right,sub){return `<div class="row" onclick="go('${d.c}')"><div><div class="t">${i+1}. ${d.c}${HR(d)}</div><div class="m">${(d.n||"").slice(0,24)}</div><div class="m">${sub}</div></div><div class="num">${right}</div></div>`}
 async function init(){try{const j=await (await fetch("data/data.json",{cache:"no-cache"})).json();D=j.stocks;NEWS=j.news||{};
-st.textContent="做空数据日期 "+j.short_date+" · 更新 "+j.updated.slice(0,16).replace("T"," ")+" UTC · "+D.length+" 只可查 · "+D.filter(d=>d.liq).length+" 只参与排名";notify()}
-catch(e){D=demo();demo_.style.display="block";st.textContent="示例数据"}top_();sig_()}
-const demo_=document.getElementById("demo");
-function notify(){try{const k="seen",seen=JSON.parse(localStorage.getItem(k)||"[]"),now=D.filter(d=>d.sig!="hold").map(d=>d.c+d.sig);
-const fresh=now.filter(x=>!seen.includes(x));localStorage.setItem(k,JSON.stringify(now));
+const L=D.filter(d=>d.liq).length;st.textContent="做空数据 "+j.short_date+" · 更新 "+j.updated.slice(0,16).replace("T"," ")+" UTC · 共 "+D.length+" 只可查 · "+L+" 只参与排名";notify()}
+catch(e){st.textContent="数据加载失败：data/data.json 不存在，请先运行后端";return}
+top_();sig_();bf_();qf_()}
+function notify(){try{const seen=JSON.parse(localStorage.getItem("seen")||"[]"),now=D.filter(d=>d.sig!="hold").map(d=>d.c+d.sig),fresh=now.filter(x=>!seen.includes(x));localStorage.setItem("seen",JSON.stringify(now));
 if(fresh.length&&window.Notification&&Notification.permission=="granted")new Notification("ASX 新信号",{body:fresh.slice(0,6).map(x=>x.slice(0,-3)+(x.endsWith("buy")?" 买":" 卖")).join(" · ")})}catch(e){}}
-function top_(){const a=D.filter(d=>d.liq).sort((x,y)=>md=="v"?y.vr-x.vr:Math.abs(y.sp)-Math.abs(x.sp)).slice(0,10);
-document.getElementById("tl").innerHTML=a.map((d,i)=>`<div class="row" onclick="go('${d.c}')"><div><div class="t">${i+1}. ${d.c}</div><div class="m">${md=="v"?"今日 "+f(d.V.at(-1))+" · 20日均 "+f(d.av):"今日 "+d.S.at(-1).toFixed(2)+"% · 30日均 "+d.as.toFixed(2)+"%"}</div></div><div class="num"><div class="t ${(md=="v"?d.vr>1:d.sd>0)?"up":"dn"}">${md=="v"?"×"+d.vr.toFixed(2):(d.sd>0?"+":"")+d.sp.toFixed(1)+"%"}</div><span class="badge ${d.sig}">${lab[d.sig]}</span></div></div>`).join("")}
+function top_(){const a=D.filter(d=>d.liq&&d.V.length).sort((x,y)=>md=="v"?y.vr-x.vr:Math.abs(y.sp)-Math.abs(x.sp)).slice(0,20);
+$("tl").innerHTML=a.map((d,i)=>row(d,i,`<div class="t ${(md=="v"?d.vr>1:d.sd>0)?"up":"dn"}">${md=="v"?"×"+d.vr.toFixed(2):(d.sd>0?"+":"")+d.sp.toFixed(1)+"%"}</div><span class="badge ${d.sig}">${lab[d.sig]}</span>`,`${SL(d)} · 今日 ${f(d.V.at(-1))}`)).join("")}
 function mode(m){md=m;bv.classList.toggle("on",m=="v");bs.classList.toggle("on",m=="s");top_()}
+function sig_(){const a=D.filter(d=>d.sig!="hold").sort((x,y)=>y.sc-x.sc);$("sig").innerHTML=a.length?a.map((d,i)=>row(d,i,`<span class="badge ${d.sig}">${lab[d.sig]}</span>`,`放量 ×${d.vr.toFixed(2)} · ${SL(d)} · 变化 ${d.sd>0?"+":""}${d.sd.toFixed(2)}pp · 股价 ${d.px.toFixed(1)}%`)).join(""):'<div class="m">今日无信号</div>'}
+function bf_(){const a=D.filter(d=>d.bf!=null&&d.liq).sort((x,y)=>y.bf-x.bf).slice(0,20),n=D.filter(d=>d.bf!=null).length;
+$("n3").innerHTML=`<b>巴菲特/芒格风格价值模型 Top 20</b><br>评分0–100：盈利质量55（ROE、利润率、自由现金流、低负债）+ 估值30（低市盈率、低市净率）+ 安全15（低Beta、体量）。这是依据公开投资原则（及 AQR《Buffett's Alpha》）做的近似，不是巴菲特的真实模型。基本面数据每天补充约400只，目前已有 ${n} 只，覆盖会逐日扩大。`;
+$("bfl").innerHTML=a.map((d,i)=>row(d,i,`<div class="sc">${d.bf.toFixed(0)}</div>`,`ROE ${p(d.f.roe)} · 利润率 ${p(d.f.pm)} · 市盈率 ${d.f.pe??"-"} · 负债率 ${d.f.de??"-"}% · ${SL(d)}`)).join("")||'<div class="m">基本面数据尚未生成，请稍后再运行后端</div>'}
+const p=x=>x==null?"-":(x*100).toFixed(1)+"%";
+function qf_(){const a=D.filter(d=>d.qf!=null).sort((x,y)=>y.qf-x.qf).slice(0,20);
+$("n4").innerHTML=`<b>量化多因子模型 Top 20</b><br>因子：6个月动量、短期反转、量能趋势、低波动、做空比例变化、价格趋势，横截面打分后排名；做空超过10%直接扣分。梁文锋的幻方量化的模型是不公开的，这里用的是业界通用做法，不是他们的真实模型。`;
+$("qfl").innerHTML=a.map((d,i)=>row(d,i,`<div class="sc">${d.qf.toFixed(0)}</div>`,`6月动量 ${d.m}% · 近1月 ${d.r1}% · 量能 ×${d.vr.toFixed(2)} · ${SL(d)}`)).join("")||'<div class="m">暂无数据</div>'}
 function chart(a,avg,col){const w=320,h=110,mx=Math.max(...a,avg)*1.1,mn=Math.min(...a,avg)*.9,X=i=>i/(a.length-1)*w,Y=v=>h-(v-mn)/(mx-mn||1)*h;
 return `<svg viewBox="0 0 ${w} ${h}"><line x1="0" x2="${w}" y1="${Y(avg)}" y2="${Y(avg)}" stroke="var(--mut)" stroke-dasharray="4"/><polyline fill="none" stroke="${col}" stroke-width="2" points="${a.map((v,i)=>X(i)+","+Y(v)).join(" ")}"/><circle cx="${X(a.length-1)}" cy="${Y(a.at(-1))}" r="4" fill="${col}"/></svg>`}
-function look(){const c=q.value.trim().toUpperCase();if(!c){res.textContent="输入任意 ASX 代码（如 ZIP、BHP），或公司名关键词";return}
-const d=D.find(x=>x.c==c);if(!d){const m=D.filter(x=>x.c.startsWith(c)||(x.n||"").toUpperCase().includes(c)).slice(0,10);
-res.innerHTML=m.length?m.map(x=>`<button onclick="go('${x.c}')" style="margin:3px;padding:6px 10px">${x.c}</button>`).join(""):"没有找到 "+c+"：ASIC 近期没有它的做空记录，或代码有误。";return}
+function look(){const c=q.value.trim().toUpperCase();if(!c){res.textContent="输入任意 ASX 代码（如 ZIP、BHP）或公司名关键词";return}
+const d=D.find(x=>x.c==c);if(!d){const m=D.filter(x=>x.c.startsWith(c)||(x.n||"").toUpperCase().includes(c)).slice(0,12);
+res.innerHTML=m.length?m.map(x=>`<button onclick="go('${x.c}')" style="margin:3px;padding:6px 10px">${x.c}</button>`).join(""):"没有找到 "+c+"。名单来自 ASX 官方列表与 ASIC，若是新上市公司，等下一次后端运行即可。";return}
 const n=(NEWS[c]||[]).map(a=>`<div class="m" style="margin-top:6px">${a.d} · <a href="${a.u}" target="_blank">${a.t}</a></div>`).join("");
-const hv=d.V&&d.V.length>=2;
-const vol=hv?`<div class="card"><div class="m">成交量（近40日，虚线=20日均）</div>${chart(d.V,d.av,"var(--ac)")}<div class="m">今日 ${f(d.V.at(-1))} · 均值的 <b>${d.vr.toFixed(2)}×</b> · 当日涨跌 ${d.px.toFixed(2)}%</div></div>`:`<div class="card m">暂无行情/成交量数据（Yahoo 未返回此股票），仅显示做空数据。</div>`;
+const hv=d.V.length>=2,hs=d.S.length>=2;
+const vol=hv?`<div class="card"><div class="m">成交量（近40日，虚线=20日均）</div>${chart(d.V,d.av,"var(--ac)")}<div class="m">最新 ${f(d.V.at(-1))} · 均值的 <b>${d.vr.toFixed(2)}×</b> · 当日涨跌 ${d.px.toFixed(2)}%</div></div>`:`<div class="card m">暂无行情/成交量数据（Yahoo 未返回此股票）。</div>`;
+const sh=hs?`<div class="card"><div class="m">做空比例 %（近${d.S.length}个交易日，虚线=30日均）</div>${chart(d.S,d.as,d.sd>0?"var(--r)":"var(--g)")}<div class="m">最新 ${d.sl.toFixed(2)}% · 均值 ${d.as.toFixed(2)}% · 变化 <b class="${d.sd>0?"dn":"up"}">${d.sd>0?"+":""}${d.sd.toFixed(2)}pp</b></div></div>`:`<div class="card m">${d.S.length?"做空数据太少，无法画图。最新做空 "+d.sl.toFixed(2)+"%":"ASIC 没有这只股票的做空记录（做空很少或未达披露门槛）。"}</div>`;
+const md2=(d.bf!=null||d.qf!=null)?`<div class="card m">${d.bf!=null?"巴芒价值分 <b>"+d.bf.toFixed(0)+"</b>　":""}${d.qf!=null?"量化分 <b>"+d.qf.toFixed(0)+"</b>":""}${d.f?`<br>ROE ${p(d.f.roe)} · 利润率 ${p(d.f.pm)} · 市盈率 ${d.f.pe??"-"} · 市净率 ${d.f.pb??"-"} · 负债率 ${d.f.de??"-"}%`:""}</div>`:"";
 const why=d.sig!="hold"?"":!hv?"（无行情，无法判断）":!d.liq?"（成交额过低，不参与信号）":"";
-res.innerHTML=`<div class="card"><div style="display:flex;justify-content:space-between;align-items:center"><span class="big">${d.c}</span><span class="badge ${d.sig}">${lab[d.sig]}</span></div><div class="m">${d.n||""} ${why}</div></div>${vol}<div class="card"><div class="m">做空比例 %（近${d.S.length}个交易日，虚线=30日均）</div>${chart(d.S,d.as,d.sd>0?"var(--r)":"var(--g)")}<div class="m">最新 ${d.S.at(-1).toFixed(2)}% · 均值 ${d.as.toFixed(2)}% · 变化 <b class="${d.sd>0?"dn":"up"}">${d.sd>0?"+":""}${d.sd.toFixed(2)}pp</b></div></div>${n?`<div class="card"><b>最新 ASX 公告</b>${n}</div>`:""}`}
-function sig_(){const a=D.filter(d=>d.sig!="hold").sort((x,y)=>y.sc-x.sc);sig.innerHTML=a.length?a.map(d=>`<div class="row" onclick="go('${d.c}')"><div><div class="t">${d.c}</div><div class="m">放量 ×${d.vr.toFixed(2)} · 做空 ${d.sd>0?"↑":"↓"}${Math.abs(d.sd).toFixed(2)}pp · 股价 ${d.px.toFixed(1)}%</div></div><span class="badge ${d.sig}">${lab[d.sig]}</span></div>`).join(""):'<div class="m">今日无信号</div>'}
+res.innerHTML=`<div class="card"><div style="display:flex;justify-content:space-between;align-items:center"><span class="big">${d.c}${HR(d)}</span><span class="badge ${d.sig}">${lab[d.sig]}</span></div><div class="m">${d.n||""} ${d.sec?"· "+d.sec:""} ${why}</div><div class="m">${SL(d)}</div></div>${vol}${sh}${md2}${n?`<div class="card"><b>最新 ASX 公告</b>${n}</div>`:""}`}
 function tab(i,b){document.querySelectorAll(".pg").forEach((p,j)=>p.classList.toggle("on",i==j));document.querySelectorAll(".tabs button").forEach(x=>x.classList.remove("on"));b.classList.add("on");if(i==2&&window.Notification&&Notification.permission=="default")Notification.requestPermission()}
 function go(c){tab(1,document.querySelectorAll(".tabs button")[1]);q.value=c;look()}
 if("serviceWorker"in navigator)navigator.serviceWorker.register("sw.js");
