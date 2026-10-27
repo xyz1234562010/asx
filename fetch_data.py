@@ -27,6 +27,7 @@ def get_day(name):
 
 def update_history():
     old = pd.read_csv(HIST) if HIST.exists() else pd.DataFrame(columns=["date", "code", "pct", "name"])
+    if "name" not in old.columns: old["name"] = ""
     have = set(old["date"])
     back = 12 if len(have) else BACKFILL
     names = set()
@@ -39,11 +40,12 @@ def update_history():
     for i in range(back):  # 直接按日期猜文件名（工作日）
         d = today - dt.timedelta(days=i)
         if d.weekday() < 5: names.add(f"RR{d:%Y%m%d}-001-SSDailyAggShortPos.csv")
-    names = sorted(n for n in names if dt.datetime.strptime(n[2:10], "%Y%m%d").date().isoformat() not in have)
+    dd = lambda n: dt.datetime.strptime(n[2:10], "%Y%m%d").date()
+    names = sorted(n for n in names if dd(n).isoformat() not in have or dd(n) >= today - dt.timedelta(days=12))  # 新日期 + 最近12天（刷新公司名称）
     from concurrent.futures import ThreadPoolExecutor
     with ThreadPoolExecutor(8) as ex: got = [g for g in ex.map(get_day, names) if g is not None]
     print("tried", len(names), "files, downloaded", len(got))
-    h = pd.concat([old] + got)[["date", "code", "pct", "name"]].drop_duplicates(["date", "code"], keep="last")
+    h = pd.concat([old] + got, ignore_index=True)[["date", "code", "pct", "name"]].drop_duplicates(["date", "code"], keep="last")
     if h.empty: raise SystemExit("ASIC 数据一个都没下载到：请把这段日志截图给 Claude")
     h.to_csv(HIST, index=False); return h
 
