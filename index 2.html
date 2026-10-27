@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ASX 智能化全因子做空选股交互看板</title>
+    <!-- 引入 Tailwind CSS 进行现代化美观布局 -->
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <!-- 引入 PapaParse 解析 CSV 数据 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    <style>
+        .gradient-bg { background: linear-gradient(135deg, #1e3a8a 0%, #0f172a 100%); }
+        .card { background: #ffffff; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05), 0 2px 4px -1px rgba(0,0,0,0.03); }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-800 font-sans min-h-screen">
+
+    <!-- 顶部精美大导流条 -->
+    <header class="gradient-bg text-white py-6 px-8 shadow-xl">
+        <div class="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center">
+            <div>
+                <h1 class="text-2xl md:text-3xl font-bold tracking-wide flex items-center gap-2">
+                    🇦🇺 ASX 智能化全因子做空选股看板
+                </h1>
+                <p class="text-blue-200 text-sm mt-1">融合 ASIC 官方做空异动突破 + 行情多头动量 + AQR 经典巴菲特 Alpha 实战量化模型</p>
+            </div>
+            <div class="mt-4 md:mt-0 text-right">
+                <span id="data-status" class="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-yellow-400 text-slate-900 animate-pulse">
+                    正在等待加载本地数据...
+                </span>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto px-4 py-8 lg:px-8 flex flex-col lg:flex-row gap-8">
+        
+        <!-- 左侧：完全自定义交互控制面板 (User-Friendly UI) -->
+        <aside class="w-full lg:w-80 shrink-0 flex flex-col gap-6">
+            <div class="card p-6 border border-gray-100">
+                <h3 class="text-lg font-bold text-slate-900 border-b pb-3 mb-4 flex items-center gap-2">
+                    ⚙️ 动态选股规则配置
+                </h3>
+                
+                <!-- 规则 1：前多少名控制 -->
+                <div class="mb-5">
+                    <label class="block text-sm font-semibold text-gray-700 mb-2 flex justify-between">
+                        <span>1. 最终显示排名名次 (Top X)</span>
+                        <span id="val-top" class="text-blue-600 font-bold">20</span>
+                    </label>
+                    <input type="range" id="filter-top" min="5" max="100" value="20" step="5" class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600">
+                </div>
+
+                <!-- 规则 2：做空比例区间设置 -->
+                <div class="mb-5 border-t pt-4">
+                    <h4 class="text-xs font-bold text-gray-400 tracking-wider uppercase mb-3">2. 做空比例限制 (%)</h4>
+                    <div class="mb-3">
+                        <label class="block text-xs text-gray-500 mb-1">最低做空头寸限制 (%)</label>
+                        <input type="number" id="filter-min-short" min="0" max="100" value="2.0" step="0.5" class="w-full px-3 py-1.5 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-blue-500 font-medium">
+                    </div>
+                    <div>
+                        <label class="block text-xs text-gray-500 mb-1">最高做空头寸上限 (%)</label>
+                        <input type="number" id="filter-max-short" min="0" max="100" value="25.0" step="0.5" class="w-full px-3 py-1.5 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-blue-500 font-medium">
+                    </div>
+                </div>
+
+                <!-- 规则 3：做空突破剧烈度 (Z-Score) -->
+                <div class="mb-5 border-t pt-4">
+                    <label class="block text-sm font-semibold text-gray-700 mb-2 flex justify-between">
+                        <span>3. 做空突变异动 (Z-Score)</span>
+                        <span id="val-zscore" class="text-blue-600 font-bold">≥ 0.0</span>
+                    </label>
+                    <input type="range" id="filter-zscore" min="-2" max="4" value="0.0" step="0.5" class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600">
+                    <p class="text-xs text-gray-400 mt-1">Z-Score 越大代表空头近几天突然疯狂建仓</p>
+                </div>
+
+                <!-- 规则 4：成交量与流动性门槛 -->
+                <div class="mb-5 border-t pt-4">
+                    <h4 class="text-xs font-bold text-gray-400 tracking-wider uppercase mb-3">4. 澳洲真实市场流动性保护</h4>
+                    <div class="mb-3">
+                        <label class="block text-xs text-gray-500 mb-1">单日均成交额下限 (AUD)</label>
+                        <select id="filter-turnover" class="w-full px-3 py-1.5 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-blue-500 font-medium">
+                            <option value="100000" selected>$100,000 AUD (标准高流动性)</option>
+                            <option value="500000">$500,000 AUD (大中型机构级)</option>
+                            <option value="0">$0 (允许任何微盘僵尸股)</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700 mb-2 flex justify-between">
+                            <span>量比下限 (今日/均量)</span>
+                            <span id="val-volratio" class="text-blue-600 font-bold">1.0倍</span>
+                        </label>
+                        <input type="range" id="filter-volratio" min="0.5" max="3" value="1.0" step="0.1" class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600">
+                    </div>
+                </div>
+
+                <!-- 规则 5：巴菲特Alpha量化因子分 -->
+                <div class="mb-6 border-t pt-4">
+                    <label class="block text-sm font-semibold text-gray-700 mb-2 flex justify-between">
+                        <span>5. 巴菲特Alpha模型底限</span>
+                        <span id="val-score" class="text-blue-600 font-bold">40分</span>
+                    </label>
+                    <input type="range" id="filter-score" min="0" max="100" value="40" step="5" class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600">
+                    <p class="text-xs text-gray-400 mt-1">分数越高代表企业财务底子、ROE越坚硬</p>
+                </div>
+
+                <button id="btn-reset" class="w-full bg-slate-100 text-slate-700 font-medium py-2 rounded-lg text-sm hover:bg-slate-200 transition-colors">
+                    重置筛选条件
+                </button>
+            </div>
+            
+            <!-- 快捷实战战术筛选过滤器 -->
+            <div class="card p-5 border border-gray-100 bg-blue-50/50">
+                <h4 class="text-sm font-bold text-blue-900 mb-3 flex items-center gap-1">🎯 经典量化实战一键锁仓</h4>
+                <div class="flex flex-col gap-2">
+                    <button onclick="setStrategy('squeeze')" class="w-full text-left bg-white border border-blue-200 hover:border-blue-500 text-xs font-semibold text-blue-900 px-3 py-2 rounded-lg transition-all shadow-sm">
+                        🔥 潜在“轧空 (Short Squeeze)”大爆发突破仓
+                    </button>
+                    <button onclick="setStrategy('buffett')" class="w-full text-left bg-white border border-blue-200 hover:border-blue-500 text-xs font-semibold text-blue-900 px-3 py-2 rounded-lg transition-all shadow-sm">
+                        💎 被恶意错杀的“白马股黄金底”价值仓
+                    </button>
+                </div>
+            </div>
+        </aside>
+
+        <!-- 右侧：智能化核心看板展示区 -->
+        <section class="flex-1 min-w-0">
+            <!-- 核心汇总看板 -->
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+                <div class="card p-4 flex items-center gap-4 border border-gray-100">
+                    <div class="p-3 bg-blue-50 text-blue-600 rounded-xl text-2xl">🔍</div>
+                    <div>
+                        <p class="text-xs text-gray-400 font-medium">当前符合筛选条件</p>
+                        <p id="stat-count" class="text-xl font-bold text-slate-900">0 只</p>
+                    </div>
+                </div>
+                <div class="card p-4 flex items-center gap-4 border border-gray-100">
+                    <div class="p-3 bg-amber-50 text-amber-600 rounded-xl text-2xl">🔥</div>
+                    <div>
+                        <p class="text-xs text-gray-400 font-medium">筛选池最高做空比例</p>
+                        <p id="stat-max-short" class="text-xl font-bold text-slate-900">0.00%</p>
+                    </div>
+                </div>
+                <div class="card p-4 flex items-center gap-4 border border-gray-100">
+                    <div class="p-3 bg-emerald-50 text-emerald-600 rounded-xl text-2xl">🏆</div>
+                    <div>
+                        <p class="text-xs text-gray-400 font-medium">筛选池最佳财务因子分</p>
+                        <p id="stat-max-score" class="text-xl font-bold text-slate-900">0.0分</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 数据呈现核心表格大仓 -->
+            <div class="card border border-gray-100 overflow-hidden">
+                <div class="p-5 border-b border-gray-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-slate-50/50">
+                    <h3 class="font-bold text-slate-900 flex items-center gap-2 text-base">
+                        📋 穿透交叉比对矩阵（高做空量化标的）
+                    </h3>
+                    <div class="text-xs text-gray-500 font-medium">
+                        * 点击表头可以进行单列指标的正倒序重排
+                    </div>
+                </div>
+
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse min-w-[900px]">
+                        <thead>
+                            <tr class="bg-slate-100/70 border-b border-gray-200 text-xs font-bold text-slate-600 uppercase tracking-wider">
+                                <th class="py-3 px-4 cursor-pointer hover:bg-gray-200" onclick="sortTable('code')">ASX代码 ⇅</th>
+                                <th class="py-3 px-4">公司全称与行业分类</th>
+                                <th class="py-3 px-4 cursor-pointer hover:bg-gray-200 text-right" onclick="sortTable('short_pct')">当前做空头寸 ⇅</th>
+                                <th class="py-3 px-4 cursor-pointer hover:bg-gray-200 text-right" onclick="sortTable('short_zscore')">做空剧烈变动(Z) ⇅</th>
+                                <th class="py-3 px-4 cursor-pointer hover:bg-gray-200 text-right" onclick="sortTable('close')">收盘价(AUD) ⇅</th>
+                                <th class="py-3 px-4 cursor-pointer hover:bg-gray-200 text-right" onclick="sortTable('daily_return')">单日涨跌 ⇅</th>
+                                <th class="py-3 px-4 cursor-pointer hover:bg-gray-200 text-right" onclick="sortTable('vol_ratio')">今日量比 ⇅</th>
+                                <th class="py-3 px-4 cursor-pointer hover:bg-gray-200 text-right" onclick="sortTable('momentum_6m_trend')">半年趋势 ⇅</th>
+                                <th class="py-3 px-4 cursor-pointer hover:bg-gray-200 text-right font-semibold text-blue-900" onclick="sortTable('buffett_alpha_score')">巴菲特因子分 ⇅</th>
+                            </tr>
+                        </thead>
+                        <tbody id="table-body" class="text-sm divide-y divide-gray-100 font-medium text-slate-700">
+                            <!-- 动态加载行 -->
+                            <tr>
+                                <td colspan="9" class="py-12 text-center text-gray-400 font-normal">
+                                    正在动态侦测本地数据源，如长期未加载，请确认 `asx_quant_signals.csv` 文件已由 Python 脚本生成并放置于同一目录下。
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- 实战研判教学锦囊 -->
+            <footer class="mt-6 card p-5 border border-dashed border-blue-200 bg-blue-50/20">
+                <h4 class="text-sm font-bold text-blue-950 mb-2">💡 全球机构核心交叉比对研判说明书</h4>
+                <ul class="text-xs text-slate-600 space-y-2 list-disc list-inside leading-relaxed">
+                    <li><strong class="text-blue-900">轧空博弈 (Short Squeeze)：</strong>锁定当前做空比极高，且做空突变 <span class="text-orange-600 font-semibold">Z-Score ≧ 1.5</span>，同时单日伴随大涨（>2%）、量比突破 1.5倍 且 半年趋势为正。空头被迫平仓会转化为疯狂买盘，属于典型的短线高爆发交易模式。</li>
+                    <li><strong class="text-emerald-900">优质白马黄金坑 (Value Investment)：</strong>寻找做空比例不低，但是巴菲特量化得分 <span class="text-emerald-600 font-semibold">≧ 65分</span> 的标的（具备无敌的高 ROE、健康的自由现金流和超低负债率，但当前估值极度便宜）。此类个股往往属于被对冲基金恶意错杀的“深水炸弹”，具有极高的长线左侧防御与买入价值。</li>
+                </ul>
+            </footer>
+        </section>
+    </main>
+
+    <!-- 核心驱动引擎与动态响应逻辑 -->
+    <script>
+        let rawStocks = [];
+        let currentSortKey = 'short_pct';
+        let currentSortOrder = -1; // 默认降序
+
+        // 核心：页面加载后自动尝试读取本地 fetch_data.py 产生的数据底稿
+        document.addEventListener('DOMContentLoaded', () => {
+            initInputs();
+            loadLocalCSV();
+        });
+
+        function initInputs() {
+            const inputs = ['filter-top', 'filter-min-short', 'filter-max-short', 'filter-zscore', 'filter-volratio', 'filter-score', 'filter-turnover'];
+            inputs.forEach(id => {
+                const el = document.getElementById(id);
+                if(el) el.addEventListener('input', () => { updateLabels(); renderTable(); });
+            });
+            document.getElementById('btn-reset').addEventListener('click', resetFilters);
+        }
+
+        function updateLabels() {
+            document.getElementById('val-top').innerText = document.getElementById('filter-top').value;
+            document.getElementById('val-zscore').innerText = '≥ ' + parseFloat(document.getElementById('filter-zscore').value).toFixed(1);
+            document.getElementById('val-volratio').innerText = parseFloat(document.getElementById('filter-volratio').value).toFixed(1) + '倍';
+            document.getElementById('val-score').innerText = document.getElementById('filter-score').value + '分';
+        }
+
+        function resetFilters() {
+            document.getElementById('filter-top').value = 20;
+            document.getElementById('filter-min-short').value = 2.0;
+            document.getElementById('filter-max-short').value = 25.0;
+            document.getElementById('filter-zscore').value = 0.0;
+            document.getElementById('filter-turnover').value = 100000;
+            document.getElementById('filter-volratio').value = 1.0;
+            document.getElementById('filter-score').value = 40;
+            updateLabels();
+            renderTable();
+        }
+
+        function setStrategy(type) {
+            resetFilters();
+            if(type === 'squeeze') {
+                document.getElementById('filter-zscore').value = 1.5;
+                document.getElementById('filter-volratio').value = 1.3;
+            } else if(type === 'buffett') {
+                document.getElementById('filter-score').value = 65;
+                document.getElementById('filter-min-short').value = 1.0;
+            }
+            updateLabels();
+            renderTable();
+        }
+
+        function loadLocalCSV() {
+            // 使用 PapaParse 异步优雅解析同级目录下的数据文件
+            Papa.parse('asx_quant_signals.csv', {
+                download: true,
+                header: true,
+                dynamicTyping: true,
+                complete: function(results) {
+                    if (results.data && results.data.length > 0 && results.data[0].code) {
+                        rawStocks = results.data.filter(s => s.code);
+                        document.getElementById('data-status').className = "inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-emerald-500 text-white";
+                        document.getElementById('data-status').innerText = "✓ 本地多因子CSV数据载入成功";
+                        renderTable();
+                    } else {
+                        showErrorStatus();
+                    }
+                },
+                error: function() {
+                    showErrorStatus();
+                }
+            });
+        }
+
+        function showErrorStatus() {
+            const statusEl = document.getElementById('data-status');
+            statusEl.className = "inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-red-500 text-white";
+            statusEl.innerText = "⚠ 暂未读取到 csv 文件";
+        }
+
+        function sortTable(key) {
+            if (currentSortKey === key) {
+                currentSortOrder *= -1; // 反转排序顺序
+            } else {
+                currentSortKey = key;
+                currentSortOrder = -1; // 新选中的列默认按降序排列
+            }
+            renderTable();
+        }
+
+        function renderTable() {
+            if (rawStocks.length === 0) return;
+
+            // 1. 读取当前的 UI 拦截器滑块和数字值
+            const topN = parseInt(document.getElementById('filter-top').value);
+            const minShort = parseFloat(document.getElementById('filter-min-short').value) || 0;
+            const maxShort = parseFloat(document.getElementById('filter-max-short').value) || 100;
+            const minZ = parseFloat(document.getElementById('filter-zscore').value);
+            const minTurnover = parseFloat(document.getElementById('filter-turnover').value);
+            const minVolRatio = parseFloat(document.getElementById('filter-volratio').value);
+            const minScore = parseFloat(document.getElementById('filter-score').value);
+
+            // 2. 执行严苛、多维度穿透交叉清洗
+            let filtered = rawStocks.filter(s => {
+                const shortPct = s.short_pct || 0;
+                const zscore = s.short_zscore || 0;
+                const turnover = s.daily_turnover || 0;
+                const volRatio = s.vol_ratio || 0;
+                const score = s.buffett_alpha_score || 0;
+
+                return shortPct >= minShort &&
+                       shortPct <= maxShort &&
+                       zscore >= minZ &&
+                       turnover >= minTurnover &&
+                       volRatio >= minVolRatio &&
+                       score >= minScore;
+            });
+
+            // 3. 全局动态衍生统计指标计算
+            document.getElementById('stat-count').innerText = filtered.length + ' 只';
+            if(filtered.length > 0) {
+                const shorts = filtered.map(s => s.short_pct || 0);
+                const scores = filtered.map(s => s.buffett_alpha_score || 0);
+                document.getElementById('stat-max-short').innerText = Math.max(...shorts).toFixed(2) + '%';
+                document.getElementById('stat-max-score').innerText = Math.max(...scores).toFixed(1) + '分';
+            } else {
+                document.getElementById('stat-max-short').innerText = '0.00%';
+                document.getElementById('stat-max-score').innerText = '0.0分';
+            }
+
+            // 4. 应用表头动态排序规则
+            filtered.sort((a, b) => {
+                let valA = a[currentSortKey] !== undefined && a[currentSortKey] !== null ? a[currentSortKey] : (currentSortOrder === -1 ? -999999 : 999999);
+                let valB = b[currentSortKey] !== undefined && b[currentSortKey] !== null ? b[currentSortKey] : (currentSortOrder === -1 ? -999999 : 999999);
+                
+                if (typeof valA === 'string') {
+                    return valA.localeCompare(valB) * currentSortOrder;
+                }
+                return (valA - valB) * currentSortOrder;
+            });
+
+            // 5. 截取用户设定的 Top 数量
+            const finalDisplay = filtered.slice(0, topN);
+
+            // 6. DOM 渲染表格节点
+            const tbody = document.getElementById('table-body');
+            tbody.innerHTML = '';
+
+            if (finalDisplay.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="9" class="py-12 text-center text-gray-400 font-normal">💡 在当前严苛的量化规则下，筛选池结果完美归零。建议您降低过滤门槛（如调低最小做空比例限制或释放量比标准）以扩大雷达捕捉面。</td></tr>`;
+                return;
+            }
+
+            finalDisplay.forEach(s => {
+                const tr = document.createElement('tr');
+                tr.className = "hover:bg-slate-50/80 transition-colors border-b border-gray-100 text-slate-700";
+                
+                // 给做空比例和巴菲特打分渲染极为专业优雅的渐变热力背影色
+                const shortColor = `rgba(249, 115, 22, ${Math.min(s.short_pct / 18, 0.25)})`;
+                const scoreColor = `rgba(16, 185, 129, ${Math.min(s.buffett_alpha_score / 90, 0.22)})`;
+                
+                const returnVal = s.daily_return || 0;
+                const returnClass = returnVal > 0 ? 'text-emerald-600' : (returnVal < 0 ? 'text-red-500' : 'text-gray-500');
+                const returnSign = returnVal > 0 ? '+' : '';
+
+                tr.innerHTML = `
+                    <td class="py-4 px-4 font-bold text-slate-900 tracking-wide">${s.code}.AX</td>
+                    <td class="py-4 px-4 max-w-[240px] truncate font-normal">
+                        <div class="text-sm font-semibold text-slate-800">${s.full_name || s.company_name || '未知上市企业'}</div>
+                        <div class="text-xs text-gray-400 mt-0.5">${s.sector || '暂无详细行业分类'}</div>
+                    </td>
+                    <td class="py-4 px-4 text-right font-bold text-orange-950" style="background-color: ${shortColor}">${(s.short_pct || 0).toFixed(2)}%</td>
+                    <td class="py-4 px-4 text-right ${s.short_zscore >= 1.5 ? 'text-orange-600 font-bold' : 'text-slate-600'}">${(s.short_zscore || 0).toFixed(2)}</td>
+                    <td class="py-4 px-4 text-right text-slate-900">$ ${(s.close || 0).toFixed(2)}</td>
+                    <td class="py-4 px-4 text-right font-bold ${returnClass}">${returnSign}${returnVal.toFixed(2)}%</td>
+                    <td class="py-4 px-4 text-right ${s.vol_ratio >= 1.5 ? 'text-blue-600 font-bold' : 'text-slate-600'}">${(s.vol_ratio || 0).toFixed(2)} 倍</td>
+                    <td class="py-4 px-4 text-right ${(s.momentum_6m_trend || 0) > 0 ? 'text-emerald-600' : 'text-slate-500'}">${(s.momentum_6m_trend || 0).toFixed(1)}%</td>
+                    <td class="py-4 px-4 text-right font-bold text-emerald-950" style="background-color: ${scoreColor}">${(s.buffett_alpha_score || 0).toFixed(1)} 分</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+    </script>
+</body>
+</html>
