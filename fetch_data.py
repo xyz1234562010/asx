@@ -5,18 +5,9 @@ D = pathlib.Path("data"); D.mkdir(exist_ok=True)
 H = {"User-Agent": "Mozilla/5.0"}
 BASE = "https://download.asic.gov.au/short-selling/"
 HIST = D / "short_history.csv"          # 累积的全部历史: date,code,pct
-BACKFILL = int(os.getenv("BACKFILL", "250"))  # 首次回填的交易日数
+BACKFILL = int(os.getenv("BACKFILL", "200"))  # 首次回填的交易日数
 
-def list_files():
-    t = requests.get(BASE + "short-selling-data.json", headers=H, timeout=60).text
-    names = sorted(set(re.findall(r"RR\d{8}-\d+-SSDailyAggShortPos\.csv", t)))
-    if not names:  # 备用：从 ASIC 页面抓链接
-        p = requests.get("https://www.asic.gov.au/regulatory-resources/markets/short-selling/short-position-reports-table/", headers=H, timeout=60).text
-        names = sorted(set(re.findall(r"RR\d{8}-\d+-SSDailyAggShortPos\.csv", p)))
-    return names
-
-def read_asic(name):
-    b = requests.get(BASE + name, headers=H, timeout=60).content
+def parse(b, name):
     s = b.decode("utf-16") if b[:2] in (b"\xff\xfe", b"\xfe\xff") else b.decode("utf-8-sig", "ignore")
     df = pd.read_csv(io.StringIO(s), sep=None, engine="python")
     code = next(c for c in df.columns if "code" in c.lower())
@@ -25,12 +16,33 @@ def read_asic(name):
     out["date"] = dt.datetime.strptime(name[2:10], "%Y%m%d").date().isoformat()
     return out.dropna()
 
+def get_day(name):
+    try:
+        r = requests.get(BASE + name, headers=H, timeout=60)
+        if r.status_code != 200: return None
+        return parse(r.content, name)
+    except Exception: return None
+
 def update_history():
     old = pd.read_csv(HIST) if HIST.exists() else pd.DataFrame(columns=["date", "code", "pct"])
     have = set(old["date"])
-    todo = [n for n in list_files() if dt.datetime.strptime(n[2:10], "%Y%m%d").date().isoformat() not in have][-BACKFILL:]
-    new = [read_asic(n) for n in todo]
-    h = pd.concat([old] + new)[["date", "code", "pct"]].drop_duplicates(["date", "code"])
+    back = 12 if len(have) else BACKFILL
+    names = set()
+    try:  # 若索引文件可用，则一并使用
+        t = requests.get(BASE + "short-selling-data.json", headers=H, timeout=60).text
+        names |= set(re.findall(r"RR\d{8}-\d+-SSDailyAggShortPos\.csv", t))
+        print("index json ok, files:", len(names))
+    except Exception as e: print("index json failed:", e)
+    today = dt.date.today()
+    for i in range(back):  # 直接按日期猜文件名（工作日）
+        d = today - dt.timedelta(days=i)
+        if d.weekday() < 5: names.add(f"RR{d:%Y%m%d}-001-SSDailyAggShortPos.csv")
+    names = sorted(n for n in names if dt.datetime.strptime(n[2:10], "%Y%m%d").date().isoformat() not in have)
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(8) as ex: got = [g for g in ex.map(get_day, names) if g is not None]
+    print("tried", len(names), "files, downloaded", len(got))
+    h = pd.concat([old] + got)[["date", "code", "pct"]].drop_duplicates(["date", "code"])
+    if h.empty: raise SystemExit("ASIC 数据一个都没下载到：请把这段日志截图给 Claude")
     h.to_csv(HIST, index=False); return h
 
 def prices(codes):
