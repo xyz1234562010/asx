@@ -12,7 +12,9 @@ def parse(b, name):
     df = pd.read_csv(io.StringIO(s), sep=None, engine="python")
     code = next(c for c in df.columns if "code" in c.lower())
     pct = next(c for c in df.columns if "%" in c)
-    out = pd.DataFrame({"code": df[code].astype(str).str.strip(), "pct": pd.to_numeric(df[pct], errors="coerce")})
+    nm = next((c for c in df.columns if "product" in c.lower() and "code" not in c.lower()), None)
+    out = pd.DataFrame({"code": df[code].astype(str).str.strip(), "pct": pd.to_numeric(df[pct], errors="coerce"),
+                        "name": df[nm].astype(str).str.strip() if nm else ""})
     out["date"] = dt.datetime.strptime(name[2:10], "%Y%m%d").date().isoformat()
     return out.dropna()
 
@@ -24,7 +26,7 @@ def get_day(name):
     except Exception: return None
 
 def update_history():
-    old = pd.read_csv(HIST) if HIST.exists() else pd.DataFrame(columns=["date", "code", "pct"])
+    old = pd.read_csv(HIST) if HIST.exists() else pd.DataFrame(columns=["date", "code", "pct", "name"])
     have = set(old["date"])
     back = 12 if len(have) else BACKFILL
     names = set()
@@ -41,17 +43,28 @@ def update_history():
     from concurrent.futures import ThreadPoolExecutor
     with ThreadPoolExecutor(8) as ex: got = [g for g in ex.map(get_day, names) if g is not None]
     print("tried", len(names), "files, downloaded", len(got))
-    h = pd.concat([old] + got)[["date", "code", "pct"]].drop_duplicates(["date", "code"])
+    h = pd.concat([old] + got)[["date", "code", "pct", "name"]].drop_duplicates(["date", "code"], keep="last")
     if h.empty: raise SystemExit("ASIC 数据一个都没下载到：请把这段日志截图给 Claude")
     h.to_csv(HIST, index=False); return h
 
+def grab(lst, vols, closes):
+    try: d = yf.download([c + ".AX" for c in lst], period="6mo", group_by="column", progress=False, threads=True)
+    except Exception: return
+    if d is None or d.empty: return
+    v, c = d["Volume"], d["Close"]
+    if isinstance(v, pd.Series): v, c = v.to_frame(lst[0] + ".AX"), c.to_frame(lst[0] + ".AX")
+    for k in v.columns:
+        sv = v[k].dropna()
+        if len(sv) >= 25: vols[k[:-3]] = sv; closes[k[:-3]] = c[k].dropna()
+
 def prices(codes):
-    V, C = [], []
-    for i in range(0, len(codes), 150):
-        d = yf.download([c + ".AX" for c in codes[i:i+150]], period="6mo", group_by="column", progress=False, threads=True)
-        if d.empty: continue
-        V.append(d["Volume"]); C.append(d["Close"])
-    return pd.concat(V, axis=1), pd.concat(C, axis=1)
+    vols, closes = {}, {}
+    for i in range(0, len(codes), 100): grab(codes[i:i+100], vols, closes)
+    miss = [c for c in codes if c not in vols]
+    print("price missing after 1st pass:", len(miss))
+    for i in range(0, len(miss), 20): grab(miss[i:i+20], vols, closes)   # 补抓漏掉的
+    print("price missing after retry:", len([c for c in codes if c not in vols]))
+    return vols, closes
 
 def news(code):
     try:  # 尽力而为：ASX 公告接口（非官方，失败则忽略）
@@ -59,31 +72,40 @@ def news(code):
         return [{"t": a["header"], "d": a["document_release_date"][:10], "u": a.get("url", "")} for a in r["data"]]
     except Exception: return []
 
+def build(wide, names, vols, closes):
+    out = []
+    for c in wide.columns:
+        sr = wide[c].dropna()
+        if len(sr) < 3: continue
+        base = sr.iloc[-31:-1]
+        avs = base.mean(); sdv = (base.std() if len(base) > 1 else 0) or 1e-6
+        sd = sr.iloc[-1] - avs; z = sd / sdv
+        e = dict(c=c, n=names.get(c, ""), S=[round(x, 3) for x in sr.iloc[-40:]], V=[], av=0, vr=0, px=0,
+                 sd=round(sd, 3), sp=round(sd / avs * 100 if avs else 0, 1), z=round(z, 2), sig="hold", sc=0, liq=0)
+        e["as"] = round(avs, 3)
+        if c in vols:
+            v = vols[c]; p = closes[c]
+            av = v.iloc[-21:-1].mean()
+            if av > 0:
+                vr = v.iloc[-1] / av; px = (p.iloc[-1] / p.iloc[-2] - 1) * 100 if len(p) > 1 else 0
+                liq = av * p.iloc[-1] >= 100_000
+                e.update(V=[int(x) for x in v.iloc[-40:]], av=int(av), vr=round(vr, 2), px=round(px, 2), liq=int(liq))
+                if liq and abs(sd) >= 0.1:   # 做空比例绝对变化至少0.1个百分点，过滤假信号
+                    if vr >= 1.3 and z <= -1 and px > 0: e["sig"], e["sc"] = "buy", round((vr - 1) + abs(z), 2)
+                    elif vr >= 1.2 and z >= 1 and px < 0: e["sig"], e["sc"] = "sell", round((vr - 1) + z, 2)
+        out.append(e)
+    return out
+
 def main():
     h = update_history()
     wide = h.pivot(index="date", columns="code", values="pct").sort_index()
-    codes = list(wide.columns)
-    vol, close = prices(codes)
-    out = []
-    for c in codes:
-        s = wide[c].dropna()
-        k = c + ".AX"
-        if len(s) < 10 or k not in vol.columns: continue
-        v = vol[k].dropna(); p = close[k].dropna()
-        if len(v) < 25: continue
-        av = v.iloc[-21:-1].mean(); avs = s.iloc[-31:-1].mean(); sdv = s.iloc[-31:-1].std() or 1e-6
-        if av * p.iloc[-1] < 100_000: continue          # 过滤流动性极差的股票
-        vr = v.iloc[-1] / av; sd = s.iloc[-1] - avs; z = sd / sdv
-        px = (p.iloc[-1] / p.iloc[-2] - 1) * 100
-        sig, sc = "hold", 0.0
-        if vr >= 1.3 and z <= -1 and px > 0: sig, sc = "buy", (vr - 1) + abs(z)
-        elif vr >= 1.2 and z >= 1 and px < 0: sig, sc = "sell", (vr - 1) + z
-        out.append(dict(c=c, V=[int(x) for x in v.iloc[-40:]], S=[round(x, 3) for x in s.iloc[-40:]],
-                        av=int(av), **{"as": round(avs, 3)}, vr=round(vr, 2), sd=round(sd, 3),
-                        sp=round(sd / avs * 100 if avs else 0, 1), px=round(px, 2), z=round(z, 2), sig=sig, sc=round(sc, 2)))
-    nw = {d["c"]: news(d["c"]) for d in sorted([d for d in out if d["sig"] != "hold"], key=lambda d: -d["sc"])[:20]}
+    names = h.dropna(subset=["name"]).drop_duplicates("code", keep="last").set_index("code")["name"].to_dict()
+    vols, closes = prices(list(wide.columns))
+    out = build(wide, names, vols, closes)
+    top = sorted([d for d in out if d["sig"] != "hold"], key=lambda d: -d["sc"])[:20]
+    nw = {d["c"]: news(d["c"]) for d in top}
     json.dump({"updated": dt.datetime.utcnow().isoformat() + "Z", "short_date": wide.index[-1], "stocks": out, "news": nw},
               open(D / "data.json", "w"), separators=(",", ":"))
-    print("ok", len(out), "stocks")
+    print("ok", len(out), "stocks;", sum(d["liq"] for d in out), "ranked;", sum(1 for d in out if d["V"]), "with price")
 
 if __name__ == "__main__": main()
